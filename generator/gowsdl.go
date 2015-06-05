@@ -169,6 +169,45 @@ func (g *GoWsdl) unmarshal() error {
 }
 
 func (g *GoWsdl) resolveXsdExternals(schema *XsdSchema, url *url.URL) error {
+	for _, impor := range schema.Imports {
+		location, err := url.Parse(impor.SchemaLocation)
+		if err != nil {
+			return err
+		}
+
+		_, schemaName := filepath.Split(location.Path)
+		if g.resolvedXsdExternals[schemaName] {
+			continue
+		}
+
+		data, err := ioutil.ReadFile(location.Path)
+		if err != nil {
+			return err
+		}
+		newschema := &XsdSchema{}
+
+		err = xml.Unmarshal(data, newschema)
+		if err != nil {
+			return err
+		}
+
+		if len(newschema.Includes) > 0 &&
+		maxRecursion > g.currentRecursionLevel {
+
+			g.currentRecursionLevel++
+
+			//log.Printf("Entering recursion %d\n", g.currentRecursionLevel)
+			g.resolveXsdExternals(newschema, url)
+		}
+
+		g.wsdl.Types.Schemas = append(g.wsdl.Types.Schemas, newschema)
+
+		if g.resolvedXsdExternals == nil {
+			g.resolvedXsdExternals = make(map[string]bool, maxRecursion)
+		}
+		g.resolvedXsdExternals[schemaName] = true
+	}
+
 	for _, incl := range schema.Includes {
 		location, err := url.Parse(incl.SchemaLocation)
 		if err != nil {
