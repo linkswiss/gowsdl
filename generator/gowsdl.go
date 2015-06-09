@@ -20,6 +20,8 @@ import (
 	"text/template"
 	"time"
 	"unicode"
+	"strconv"
+//	"github.com/davecgh/go-spew/spew"
 )
 
 const maxRecursion uint8 = 20
@@ -30,6 +32,9 @@ type GoWsdl struct {
 	wsdl                  *Wsdl
 	resolvedXsdExternals  map[string]bool
 	currentRecursionLevel uint8
+	processedComplexTypes map[string]bool
+	processedSimpleTypes  map[string]bool
+	currentSchema	      *XsdSchema
 }
 
 var cacheDir = filepath.Join(os.TempDir(), "gowsdl-cache")
@@ -158,6 +163,8 @@ func (g *GoWsdl) unmarshal() error {
 		return err
 	}
 
+//	spew.Dump(g.wsdl.Types.Schemas)
+
 	for _, schema := range g.wsdl.Types.Schemas {
 		err = g.resolveXsdExternals(schema, parsedUrl)
 		if err != nil {
@@ -262,9 +269,16 @@ func (g *GoWsdl) genTypes() ([]byte, error) {
 		"toGoType":             toGoType,
 		"stripns":              stripns,
 		"replaceReservedWords": replaceReservedWords,
+		"processComplexType" :  g.processComplexType,
+		"processSimpleType" :   g.processSimpleType,
 		"makePublic":           makePublic,
 		"comment":              comment,
-		"targetNamespace":      func() string { return g.wsdl.TargetNamespace },
+		"title":				strings.Title,
+		"isArrayElement": 		isArrayElement,
+		"dictValues":			dictValues,
+		"setCurrentSchema":     g.setCurrentSchema,
+		"targetNamespace":      g.targetNamspace,
+//		"targetNamespace":      func() string { return g.wsdl.TargetNamespace },
 	}
 
 	//TODO resolve element refs in place.
@@ -361,6 +375,8 @@ var reservedWords = map[string]string{
 
 // Replaces Go reserved keywords to avoid compilation issues
 func replaceReservedWords(identifier string) string {
+	//Rplace _ to be consistent in the element pointer definition
+ 	identifier = strings.Replace(identifier, "_", "", -1)
 	value := reservedWords[identifier]
 	if value != "" {
 		return value
@@ -421,6 +437,49 @@ func toGoType(xsdType string) string {
 	}
 
 	return "*" + makePublic(type_)
+}
+
+// Check if the ComplexType is already been processed
+func (g *GoWsdl) processComplexType(complexType string) bool {
+	//return true
+	if g.processedComplexTypes[complexType] {
+		return false
+	}else{
+		if g.processedComplexTypes == nil {
+			g.processedComplexTypes = make(map[string]bool, 10000)
+		}
+		g.processedComplexTypes[complexType] = true
+		return true
+	}
+}
+
+// Check if the SimpleType is already been processed
+func (g *GoWsdl) processSimpleType(simpleType string) bool {
+	//return true
+	if g.processedSimpleTypes[simpleType] {
+		return false
+	}else{
+		if g.processedSimpleTypes == nil {
+			g.processedSimpleTypes = make(map[string]bool, 10000)
+		}
+		g.processedSimpleTypes[simpleType] = true
+		return true
+	}
+}
+
+// Check if the SimpleType is already been processed
+func (g *GoWsdl) setCurrentSchema(schema *XsdSchema) string {
+	g.currentSchema = schema
+	return ""
+}
+
+// Check if the SimpleType is already been processed
+func (g *GoWsdl) targetNamspace() string {
+	if(g.currentSchema != nil && g.currentSchema.TargetNamespace != ""){
+		return g.currentSchema.TargetNamespace
+	}else{
+		return g.wsdl.TargetNamespace
+	}
 }
 
 // Given a message, finds its type.
@@ -541,4 +600,34 @@ func comment(text string) string {
 		return output
 	}
 	return ""
+}
+
+//Check if the maxoccur of the element means that is an array or a single instance
+func isArrayElement(maxOccur string) bool{
+	if(maxOccur == "unbounded"){
+		return true
+	}
+
+	i,err := strconv.Atoi(maxOccur)
+	if(err != nil){
+		return false
+	}
+
+	return i > 1
+}
+
+//dictionary map to pass multiple params to a template
+func dictValues(values ...interface{}) (map[string]interface{}, error) {
+	if len(values)%2 != 0 {
+		return nil, errors.New("invalid dict call")
+	}
+	dict := make(map[string]interface{}, len(values)/2)
+	for i := 0; i < len(values); i+=2 {
+		key, ok := values[i].(string)
+		if !ok {
+			return nil, errors.New("dict keys must be strings")
+		}
+		dict[key] = values[i+1]
+	}
+	return dict, nil
 }

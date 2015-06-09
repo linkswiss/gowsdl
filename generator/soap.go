@@ -11,12 +11,15 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
+	"os"
 )
 
 var Log = log15.New()
 
 func init() {
-	Log.SetHandler(log15.DiscardHandler())
+//	Log.SetHandler(log15.DiscardHandler())
+	handler := log15.StreamHandler(os.Stdout, log15.LogfmtFormat())
+	Log.SetHandler(handler)
 }
 
 type SoapEnvelope struct {
@@ -26,7 +29,9 @@ type SoapEnvelope struct {
 }
 
 type SoapHeader struct {
-	Header interface{}
+	ReqHeader interface{}
+	RespHeader interface{}
+	Content string     `xml:",innerxml"`
 }
 
 type SoapBody struct {
@@ -129,6 +134,7 @@ func (s *SoapClient) Call(soapAction string, request, response interface{}, head
 
 	body := respEnvelope.Body.Content
 	fault := respEnvelope.Body.Fault
+	header.Content = respEnvelope.Header.Content
 	if body == "" {
 		Log.Warn("empty response body", "envelope", respEnvelope, "body", body)
 		return nil
@@ -138,6 +144,14 @@ func (s *SoapClient) Call(soapAction string, request, response interface{}, head
 	if fault != nil {
 		return fault
 	}
+
+	Log.Debug("Header","content",header.Content)
+	err = xml.Unmarshal([]byte(header.Content), header.RespHeader)
+	if err != nil {
+		return err
+	}
+	Log.Debug("Header","head",header.RespHeader)
+
 
 	err = xml.Unmarshal([]byte(body), response)
 	if err != nil {
