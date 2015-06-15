@@ -8,6 +8,7 @@ import (
 )
 
 type XsdSchema struct {
+	Parent			   string
 	XMLName            xml.Name          `xml:"schema"`
 	Tns                string            `xml:"xmlns tns,attr"`
 	Xs                 string            `xml:"xmlns xs,attr"`
@@ -19,6 +20,7 @@ type XsdSchema struct {
 	Elements           []*XsdElement     `xml:"element"`
 	ComplexTypes       []*XsdComplexType `xml:"complexType"` //global
 	SimpleType         []*XsdSimpleType  `xml:"simpleType"`
+	AttributeGoups	   []*XsdAttributeGroup	 `xml:"attributeGroup"`
 }
 
 type XsdInclude struct {
@@ -43,21 +45,39 @@ type XsdElement struct {
 	ComplexType *XsdComplexType `xml:"complexType"` //local
 	SimpleType  *XsdSimpleType  `xml:"simpleType"`
 	Groups      []*XsdGroup     `xml:"group"`
+	Any			[]XsdAny		`xml:"sequence>any"`
+}
+
+type XsdAny struct {
+	XMLName xml.Name            `xml:"any"`
+	ProcessContents    string   `xml:"processContents,attr"`
+	MinOccurs   string          `xml:"minOccurs,attr"`
+	MaxOccurs   string          `xml:"maxOccurs,attr"`
 }
 
 type XsdComplexType struct {
 	XMLName        xml.Name          `xml:"complexType"`
+	Doc        	   string      		 `xml:"annotation>documentation"`
 	Abstract       bool              `xml:"abstract,attr"`
 	Name           string            `xml:"name,attr"`
 	Mixed          bool              `xml:"mixed,attr"`
 	Sequence       []XsdElement      `xml:"sequence>element"`
 	SubSequence    []XsdElement      `xml:"sequence>sequence>element"`
+	Any			   []XsdAny		     `xml:"sequence>any"`
 	Choice         []XsdElement      `xml:"choice>element"`
 	All            []XsdElement      `xml:"all>element"`
 	ComplexContent XsdComplexContent `xml:"complexContent"`
 	SimpleContent  XsdSimpleContent  `xml:"simpleContent"`
-	SimpleType     *XsdSimpleType  `xml:"simpleType"`
+	SimpleType     *XsdSimpleType    `xml:"simpleType"`
 	Attributes     []*XsdAttribute   `xml:"attribute"`
+	AttributeGoups []*XsdAttributeGroup	`xml:"attributeGroup"`
+}
+
+type XsdAttributeGroup struct {
+	Name       string          `xml:"name,attr"`
+	Ref        string          `xml:"ref,attr"`
+	Doc        string          `xml:"annotation>documentation"`
+	Attributes []*XsdAttribute `xml:"attribute"`
 }
 
 type XsdGroup struct {
@@ -70,6 +90,7 @@ type XsdGroup struct {
 
 type XsdComplexContent struct {
 	XMLName   xml.Name     `xml:"complexContent"`
+	Doc        string      `xml:"annotation>documentation"`
 	Extension XsdExtension `xml:"extension"`
 }
 
@@ -96,11 +117,13 @@ type XsdSimpleType struct {
 	Name        string         `xml:"name,attr"`
 	Doc         string         `xml:"annotation>documentation"`
 	Restriction XsdRestriction `xml:"restriction"`
+	UnionType    XsdUnion      `xml:"union"`
 }
 
 type XsdRestriction struct {
 	Base         string                `xml:"base,attr"`
-	Enumeration  []XsdRestrictionValue `xml:"enumeration"`
+	Doc          string                `xml:"annotation>documentation"`
+	Enumeration  []*XsdRestrictionValue `xml:"enumeration"`
 	Pattern      XsdRestrictionValue   `xml:"pattern"`
 	MinInclusive XsdRestrictionValue   `xml:"minInclusive"`
 	MaxInclusive XsdRestrictionValue   `xml:"maxInclusive"`
@@ -113,4 +136,9 @@ type XsdRestriction struct {
 type XsdRestrictionValue struct {
 	Doc   string `xml:"annotation>documentation"`
 	Value string `xml:"value,attr"`
+}
+
+type XsdUnion struct {
+	MemberType string `xml:"memberTypes,attr"`
+	SimpleType  []*XsdSimpleType  `xml:"simpleType"`
 }
