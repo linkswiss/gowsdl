@@ -23,9 +23,9 @@ var opsTmpl = `
 
 	{{range .Operations}}
 		{{$faults := len .Faults}}
-		{{$requestType := findType .Input.Message | replaceReservedWords | makePublic}}
+		{{$requestType := findType .Input.Message }}
 		{{$soapAction := findSoapAction .Name $portType}}
-		{{$responseType := findType .Output.Message | replaceReservedWords | makePublic}}
+		{{$responseType := findType .Output.Message }}
 
 		{{/*if ne $soapAction ""*/}}
 		{{if gt $faults 0}}
@@ -33,8 +33,8 @@ var opsTmpl = `
 		// {{range .Faults}}
 		//   - {{.Name}} {{.Doc}}{{end}}{{end}}
 		{{if ne .Doc ""}}/* {{.Doc}} */{{end}}
-		func (service *{{$portType}}) {{makePublic .Name | replaceReservedWords}} ({{if ne $requestType ""}}request *{{$requestType}}{{end}}, header *gowsdl.SoapHeader, configureRequest func(*http.Request)) (*{{$responseType}}, error) {
-			response := &{{$responseType}}{}
+		func (service *{{$portType}}) {{makePublic .Name | replaceReservedWords}} ({{if ne $requestType ""}}request {{$requestType}}{{end}}, header *gowsdl.SoapHeader, configureRequest func(*http.Request)) ({{$responseType}}, error) {
+			response := &{{replaceStar $responseType}}{}
 			err := service.client.Call("{{$soapAction}}", {{if ne $requestType ""}}request{{else}}nil{{end}}, response, header, configureRequest)
 			if err != nil {
 				return nil, err

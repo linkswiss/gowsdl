@@ -14,7 +14,7 @@ import (
 //	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
+//	"path/filepath"
 	"strings"
 	"sync"
 	"text/template"
@@ -31,50 +31,13 @@ type GoXsd struct {
 	ignoreTls             bool
 	xsd                   *XsdSchema
 	resolvedXsdExternals  map[string]*XsdSchema
+	importsNeeded		  map[string]bool
 	currentRecursionLevel uint8
-	processedComplexTypes map[string]bool
-	processedSimpleTypes  map[string]bool
+	processedComplexTypes map[string]map[string]bool
+	processedSimpleTypes  map[string]map[string]bool
+	packagesTypes 	  	  map[string]map[string]bool
 	currentSchema	      *XsdSchema
 }
-
-//var cacheDir = filepath.Join(os.TempDir(), "gowsdl-cache")
-//
-//func init() {
-//	err := os.MkdirAll(cacheDir, 0700)
-//	if err != nil {
-//		Log.Crit("Create cache directory", "error", err)
-//		os.Exit(1)
-//	}
-//}
-//
-//var timeout = time.Duration(30 * time.Second)
-//
-//func dialTimeout(network, addr string) (net.Conn, error) {
-//	return net.DialTimeout(network, addr, timeout)
-//}
-//
-//func downloadFile(url string, ignoreTls bool) ([]byte, error) {
-//	tr := &http.Transport{
-//		TLSClientConfig: &tls.Config{
-//			InsecureSkipVerify: ignoreTls,
-//		},
-//		Dial: dialTimeout,
-//	}
-//	client := &http.Client{Transport: tr}
-//
-//	resp, err := client.Get(url)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	defer resp.Body.Close()
-//	data, err := ioutil.ReadAll(resp.Body)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	return data, nil
-//}
 
 func NewGoXsd(file, pkg string, ignoreTls bool) (*GoXsd, error) {
 	file = strings.TrimSpace(file)
@@ -102,6 +65,8 @@ func (g *GoXsd) Start() (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	g.fillPackagesTypes()
 
 	var wg sync.WaitGroup
 
@@ -168,9 +133,7 @@ func (g *GoXsd) resolveXsdExternals(schema *XsdSchema, url *url.URL) error {
 			return err
 		}
 
-		_, schemaName := filepath.Split(location.Path)
-		schemaName = strings.Replace(schemaName,".","",-1)
-		schemaName = strings.Replace(schemaName,"xsd","",-1)
+		schemaName := getSchemaName(location.Path)
 		if g.resolvedXsdExternals[schemaName] != nil {
 			continue
 		}
@@ -186,6 +149,11 @@ func (g *GoXsd) resolveXsdExternals(schema *XsdSchema, url *url.URL) error {
 			return err
 		}
 
+		if g.resolvedXsdExternals == nil {
+			g.resolvedXsdExternals = make(map[string]*XsdSchema, maxRecursion)
+		}
+		g.resolvedXsdExternals[schemaName] = newschema
+
 		if len(newschema.Includes) > 0 &&
 		maxRecursion > g.currentRecursionLevel {
 
@@ -197,10 +165,6 @@ func (g *GoXsd) resolveXsdExternals(schema *XsdSchema, url *url.URL) error {
 
 //		g.wsdl.Types.Schemas = append(g.wsdl.Types.Schemas, newschema)
 
-		if g.resolvedXsdExternals == nil {
-			g.resolvedXsdExternals = make(map[string]*XsdSchema, maxRecursion)
-		}
-		g.resolvedXsdExternals[schemaName] = newschema
 	}
 
 	for _, incl := range schema.Includes {
@@ -209,9 +173,7 @@ func (g *GoXsd) resolveXsdExternals(schema *XsdSchema, url *url.URL) error {
 			return err
 		}
 
-		_, schemaName := filepath.Split(location.Path)
-		schemaName = strings.Replace(schemaName,".","",-1)
-		schemaName = strings.Replace(schemaName,"xsd","",-1)
+		schemaName := getSchemaName(location.Path)
 		if g.resolvedXsdExternals[schemaName] != nil {
 			continue
 		}
@@ -242,6 +204,11 @@ func (g *GoXsd) resolveXsdExternals(schema *XsdSchema, url *url.URL) error {
 			return err
 		}
 
+		if g.resolvedXsdExternals == nil {
+			g.resolvedXsdExternals = make(map[string]*XsdSchema, maxRecursion)
+		}
+		g.resolvedXsdExternals[schemaName] = newschema
+
 		if len(newschema.Includes) > 0 &&
 			maxRecursion > g.currentRecursionLevel {
 
@@ -252,17 +219,161 @@ func (g *GoXsd) resolveXsdExternals(schema *XsdSchema, url *url.URL) error {
 		}
 
 //		g.wsdl.Types.Schemas = append(g.wsdl.Types.Schemas, newschema)
-
-		if g.resolvedXsdExternals == nil {
-			g.resolvedXsdExternals = make(map[string]*XsdSchema, maxRecursion)
-		}
-		g.resolvedXsdExternals[schemaName] = newschema
 	}
 
-	//	spew.Dump(g.wsdl.Types.Schemas)
+//	keys := make([]string, 0, len(g.resolvedXsdExternals))
+//	for k := range g.resolvedXsdExternals {
+//		keys = append(keys, k)
+//	}
+//	spew.Dump(keys)
 
 	return nil
 }
+
+func (g *GoXsd) addPackageType(elType string) {
+	if g.packagesTypes[g.currentSchema.Parent] != nil && g.packagesTypes[g.currentSchema.Parent][elType] {
+		return
+	}else {
+		if g.packagesTypes[g.currentSchema.Parent] == nil{
+			g.packagesTypes[g.currentSchema.Parent] = make(map[string]bool, 10000)
+		}
+		g.packagesTypes[g.currentSchema.Parent][elType] = true
+	}
+}
+
+func (g *GoXsd) fillComplexTypesLocal(elementType *XsdElement) {
+	elType := makePublic(replaceReservedWords(elementType.Name))
+	g.addPackageType(elType)
+
+	if(elementType.ComplexType != nil){
+		if(elementType.ComplexType.ComplexContent.Extension.Base != ""){
+			for _, el := range elementType.ComplexType.ComplexContent.Extension.Sequence {
+				if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+					g.fillComplexTypesLocal(&el)
+				}
+			}
+		}else if(elementType.ComplexType.SimpleContent.Extension.Base != ""){
+			for _, el := range elementType.ComplexType.SimpleContent.Extension.Sequence {
+				if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+					g.fillComplexTypesLocal(&el)
+				}
+			}
+		}else{
+			for _, el := range elementType.ComplexType.Sequence {
+				if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+					g.fillComplexTypesLocal(&el)
+				}
+			}
+			for _, el := range elementType.ComplexType.SubSequence {
+				if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+					g.fillComplexTypesLocal(&el)
+				}
+			}
+			for _, el := range elementType.ComplexType.Choice {
+				if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+					g.fillComplexTypesLocal(&el)
+				}
+			}
+			for _, el := range elementType.ComplexType.All {
+				if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+					g.fillComplexTypesLocal(&el)
+				}
+			}
+		}
+	}
+	return
+}
+
+func (g *GoXsd) fillComplexTypesGlobal(complexType *XsdComplexType) {
+	elType := makePublic(replaceReservedWords(complexType.Name))
+	g.addPackageType(elType)
+
+	if(complexType.ComplexContent.Extension.Base != ""){
+		for _, el := range complexType.ComplexContent.Extension.Sequence {
+			if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+				g.fillComplexTypesLocal(&el)
+			}
+		}
+	}else if(complexType.SimpleContent.Extension.Base != ""){
+		for _, el := range complexType.SimpleContent.Extension.Sequence {
+			if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+				g.fillComplexTypesLocal(&el)
+			}
+		}
+	}else{
+		for _, el := range complexType.Sequence {
+			if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+				g.fillComplexTypesLocal(&el)
+			}
+		}
+		for _, el := range complexType.SubSequence {
+			if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+				g.fillComplexTypesLocal(&el)
+			}
+		}
+		for _, el := range complexType.Choice {
+			if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+				g.fillComplexTypesLocal(&el)
+			}
+		}
+		for _, el := range complexType.All {
+			if(el.Ref == "" && el.SimpleType == nil && el.Type == ""){
+				g.fillComplexTypesLocal(&el)
+			}
+		}
+	}
+	return
+}
+
+func (g *GoXsd) fillSchemaTypes(schema *XsdSchema) {
+	for _, el := range schema.SimpleType {
+		elType := makePublic(replaceReservedWords(el.Name))
+		g.addPackageType(elType)
+	}
+
+	for _, el := range schema.ComplexTypes {
+		g.fillComplexTypesGlobal(el)
+	}
+
+	for _, el := range schema.Elements {
+		if (el.Type == "") {
+			g.fillComplexTypesLocal(el)
+		}else {
+			elType := makePublic(replaceReservedWords(strings.Title(el.Name)))
+			g.addPackageType(elType)
+		}
+	}
+
+	for _, el := range schema.AttributeGoups {
+		if (el.Ref == "") {
+			elType := makePublic(replaceReservedWords(el.Name))
+			g.addPackageType(elType)
+		}
+	}
+	return
+}
+
+
+func (g *GoXsd) fillPackagesTypes() {
+
+	schemaName := getSchemaName(g.file)
+	g.xsd.Parent = schemaName
+	g.setCurrentSchema(g.xsd)
+
+	g.packagesTypes = make(map[string]map[string]bool, 10000)
+
+	g.fillSchemaTypes(g.xsd)
+
+	for key, schema := range g.resolvedXsdExternals {
+		schema.Parent = key
+		g.setCurrentSchema(schema)
+		g.fillSchemaTypes(schema)
+	}
+
+//	spew.Dump(g.packagesTypes["OTA_SimpleTypes"])
+	return
+}
+
 
 //Generate types, included and imported schemas are under it's own namespaces, others under basetypes
 func (g *GoXsd) genTypes() (map[string][]byte, error) {
@@ -270,6 +381,7 @@ func (g *GoXsd) genTypes() (map[string][]byte, error) {
 		"toGoType":             toGoType,
 		"toGoUnionType":        toGoUnionType,
 		"isBaseType":			isBaseType,
+		"findType":             g.findType,
 		"stripns":              stripns,
 		"replaceReservedWords": replaceReservedWords,
 		"processComplexType" :  g.processComplexType,
@@ -281,31 +393,21 @@ func (g *GoXsd) genTypes() (map[string][]byte, error) {
 		"dictValues":			dictValues,
 		"setCurrentSchema":     g.setCurrentSchema,
 		"targetNamespace":      g.targetNamspace,
+		"getSchemaName":		getSchemaName,
 		"dump":					dump,
 //		"targetNamespace":      func() string { return g.wsdl.TargetNamespace },
 	}
 
-	//TODO resolve element refs in place.
-	//g.resolveElementsRefs()
-
 	gotypes := make(map[string][]byte)
+	g.importsNeeded = make(map[string]bool,100)
 
-	_, schemaName := filepath.Split(g.file)
-	schemaName = strings.Replace(schemaName,".","",-1)
-	schemaName = strings.Replace(schemaName,"xsd","",-1)
-
-	data := new(bytes.Buffer)
-	tmpl := template.Must(template.New("includetHeader").Funcs(funcMap).Parse(includeHeaderTmpl))
-	err := tmpl.Execute(data, g.pkg)
-	if err != nil {
-		return nil, err
-	}
-	gotypes[schemaName] = data.Bytes()
+	schemaName := getSchemaName(g.file)
+	g.xsd.Parent = schemaName
 
 //	for _, schema := range g.wsdl.Types.Schemas {
-		data = new(bytes.Buffer)
-		tmpl = template.Must(template.New("types").Funcs(funcMap).Parse(typesTmpl))
-		err = tmpl.Execute(data, g.xsd)
+		data := new(bytes.Buffer)
+		tmpl := template.Must(template.New("types").Funcs(funcMap).Parse(typesTmpl))
+		err := tmpl.Execute(data, g.xsd)
 		if err != nil {
 			return nil, err
 		}
@@ -316,16 +418,31 @@ func (g *GoXsd) genTypes() (map[string][]byte, error) {
 		}
 //	}
 
+	pkg := replaceReservedWords(schemaName)
+	headerElem := HeaderElements{
+		Pkg: pkg,
+		PkgBase: g.pkg,
+		ImportsNeeded: g.importsNeeded,
+	}
+
+	headerData := new(bytes.Buffer)
+	tmpl = template.Must(template.New("includetHeader").Funcs(funcMap).Parse(includeHeaderTmpl))
+	err  = tmpl.Execute(headerData, headerElem)
+	if err != nil {
+		return nil, err
+	}
+
+	content := gotypes[schemaName]
+	gotypes[schemaName] = headerData.Bytes()
+	gotypes[schemaName] = append(gotypes[schemaName],content...)
+
+//	Log.Info("Base")
+//	spew.Dump(g.importsNeeded)
+
 	for key, schema := range g.resolvedXsdExternals {
 		name := key
-
-		hederdata := new(bytes.Buffer)
-		tmplhead := template.Must(template.New("includetHeader").Funcs(funcMap).Parse(includeHeaderTmpl))
-		err := tmplhead.Execute(hederdata, g.pkg)
-		if err != nil {
-			return nil, err
-		}
-		gotypes[name] = hederdata.Bytes()
+		schema.Parent = key
+		g.importsNeeded = make(map[string]bool,100)
 
 		data = new(bytes.Buffer)
 		tmpl = template.Must(template.New("types").Funcs(funcMap).Parse(typesTmpl))
@@ -338,6 +455,27 @@ func (g *GoXsd) genTypes() (map[string][]byte, error) {
 		if(len(schemaBytes) > 0){
 			gotypes[name] = append(gotypes[name],data.Bytes()...)
 		}
+
+		pkg := replaceReservedWords(name)
+		headerElem := HeaderElements{
+			Pkg: pkg,
+			PkgBase: g.pkg,
+			ImportsNeeded: g.importsNeeded,
+		}
+
+		headerData = new(bytes.Buffer)
+		tmplhead := template.Must(template.New("includetHeader").Funcs(funcMap).Parse(includeHeaderTmpl))
+		err := tmplhead.Execute(headerData, headerElem)
+		if err != nil {
+			return nil, err
+		}
+
+		content := gotypes[name]
+		gotypes[name] = headerData.Bytes()
+		gotypes[name] = append(gotypes[name],content...)
+
+		//		gotypes[name] = append(headerData.Bytes(),gotypes[name])
+//		gotypes[name] = append([]byte{headerData.Bytes()},gotypes[name]...)
 	}
 
 	return gotypes, nil
@@ -348,175 +486,36 @@ func dump(obj interface {}) string{
 	return "dumped"
 }
 
-// func (g *GoWsdl) resolveElementsRefs() error {
-// 	for _, schema := range g.wsdl.Types.Schemas {
-// 		for _, globalEl := range schema.Elements {
-// 			for _, localEl := range globalEl.ComplexType.Sequence.Elements {
-
-// 			}
-// 		}
-// 	}
-// }
-
-//func (g *GoWsdl) genOperations() ([]byte, error) {
-//	funcMap := template.FuncMap{
-//		"toGoType":             toGoType,
-//		"stripns":              stripns,
-//		"replaceReservedWords": replaceReservedWords,
-//		"makePublic":           makePublic,
-//		"findType":             g.findType,
-//		"findSoapAction":       g.findSoapAction,
-//		"findServiceAddress":   g.findServiceAddress,
-//	}
-//
-//	data := new(bytes.Buffer)
-//	tmpl := template.Must(template.New("operations").Funcs(funcMap).Parse(opsTmpl))
-//	err := tmpl.Execute(data, g.wsdl.PortTypes)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	return data.Bytes(), nil
-//}
-
-//func (g *GoWsdl) genHeader() ([]byte, error) {
-//	funcMap := template.FuncMap{
-//		"toGoType":             toGoType,
-//		"stripns":              stripns,
-//		"replaceReservedWords": replaceReservedWords,
-//		"makePublic":           makePublic,
-//		"findType":             g.findType,
-//		"comment":              comment,
-//	}
-//
-//	data := new(bytes.Buffer)
-//	tmpl := template.Must(template.New("header").Funcs(funcMap).Parse(headerTmpl))
-//	err := tmpl.Execute(data, g.pkg)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	return data.Bytes(), nil
-//}
-
-//var reservedWords = map[string]string{
-//	"break":       "break_",
-//	"default":     "default_",
-//	"func":        "func_",
-//	"interface":   "interface_",
-//	"select":      "select_",
-//	"case":        "case_",
-//	"defer":       "defer_",
-//	"go":          "go_",
-//	"map":         "map_",
-//	"struct":      "struct_",
-//	"chan":        "chan_",
-//	"else":        "else_",
-//	"goto":        "goto_",
-//	"package":     "package_",
-//	"switch":      "switch_",
-//	"const":       "const_",
-//	"fallthrough": "fallthrough_",
-//	"if":          "if_",
-//	"range":       "range_",
-//	"type":        "type_",
-//	"continue":    "continue_",
-//	"for":         "for_",
-//	"import":      "import_",
-//	"return":      "return_",
-//	"var":         "var_",
-//}
-//
-//// Replaces Go reserved keywords to avoid compilation issues
-//func replaceReservedWords(identifier string) string {
-//	//Rplace _ to be consistent in the element pointer definition
-// 	identifier = strings.Replace(identifier, "_", "", -1)
-//	value := reservedWords[identifier]
-//	if value != "" {
-//		return value
-//	}
-//	return normalize(identifier)
-//}
-//
-//// Normalizes value to be used as a valid Go identifier, avoiding compilation issues
-//func normalize(value string) string {
-//	mapping := func(r rune) rune {
-//		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-//			return r
-//		}
-//		return -1
-//	}
-//
-//	return strings.Map(mapping, value)
-//}
-//
-//var xsd2GoTypes = map[string]string{
-//	"string":        "string",
-//	"token":         "string",
-//	"float":         "float32",
-//	"double":        "float64",
-//	"decimal":       "float64",
-//	"integer":       "int32",
-//	"int":           "int32",
-//	"short":         "int16",
-//	"byte":          "int8",
-//	"long":          "int64",
-//	"boolean":       "bool",
-//	"dateTime":      "time.Time",
-//	"date":          "time.Time",
-//	"time":          "time.Time",
-//	"base64Binary":  "[]byte",
-//	"hexBinary":     "[]byte",
-//	"unsignedInt":   "uint32",
-//	"unsignedShort": "uint16",
-//	"unsignedByte":  "byte",
-//	"unsignedLong":  "uint64",
-//	"anyType":       "interface{}",
-//}
-//
-//func toGoType(xsdType string) string {
-//	// Handles name space, ie. xsd:string, xs:string
-//	r := strings.Split(xsdType, ":")
-//
-//	type_ := r[0]
-//
-//	if len(r) == 2 {
-//		type_ = r[1]
-//	}
-//
-//	value := xsd2GoTypes[type_]
-//
-//	if value != "" {
-//		return value
-//	}
-//
-//	return "*" + makePublic(type_)
-//}
-
 // Check if the ComplexType is already been processed
 func (g *GoXsd) processComplexType(complexType string) bool {
-	//return true
-	if g.processedComplexTypes[complexType] {
+	//	return true
+	if g.processedComplexTypes[g.currentSchema.Parent] != nil && g.processedComplexTypes[g.currentSchema.Parent][complexType] {
 		return false
-	}else{
+	}else {
 		if g.processedComplexTypes == nil {
-			g.processedComplexTypes = make(map[string]bool, 10000)
+			g.processedComplexTypes = make(map[string]map[string]bool, 10000)
 		}
-		g.processedComplexTypes[complexType] = true
+		if g.processedComplexTypes[g.currentSchema.Parent] == nil{
+			g.processedComplexTypes[g.currentSchema.Parent] = make(map[string]bool, 10000)
+		}
+		g.processedComplexTypes[g.currentSchema.Parent][complexType] = true
 		return true
 	}
 }
 
 // Check if the SimpleType is already been processed
 func (g *GoXsd) processSimpleType(simpleType string) bool {
-	//return true
-	if g.processedSimpleTypes[simpleType] {
+	//	return true
+	if g.processedSimpleTypes[g.currentSchema.Parent] != nil && g.processedSimpleTypes[g.currentSchema.Parent][simpleType] {
 		return false
-	}else{
+	}else {
 		if g.processedSimpleTypes == nil {
-			g.processedSimpleTypes = make(map[string]bool, 10000)
+			g.processedSimpleTypes = make(map[string]map[string]bool, 10000)
 		}
-		g.processedSimpleTypes[simpleType] = true
+		if g.processedSimpleTypes[g.currentSchema.Parent] == nil{
+			g.processedSimpleTypes[g.currentSchema.Parent] = make(map[string]bool, 10000)
+		}
+		g.processedSimpleTypes[g.currentSchema.Parent][simpleType] = true
 		return true
 	}
 }
@@ -541,158 +540,197 @@ func (g *GoXsd) targetNamspace() string {
 // I'm not very proud of this function but
 // it works for now and performance doesn't
 // seem critical at this point
-//func (g *GoWsdl) findType(message string) string {
-//	message = stripns(message)
+func (g *GoXsd) findType(xmlType string) string {
+	elRef := makePublic(replaceReservedWords(stripns(xmlType)))
+
+//	Log.Info(elRef)
+//	spew.Dump(g.processedComplexTypes);
+
+//	schemaName := getSchemaName(g.file)
+//	Log.Info(schemaName)
+
+	if(isBaseType(xmlType)){
+//		if(xmlType == "RPH_Type"){
+//			Log.Info("BASETYPE")
+//		}
+		return toGoType(replaceReservedWords(xmlType))
+	}
+
+	for keyType, _ := range g.packagesTypes[g.currentSchema.Parent] {
+		if(elRef == keyType){
+//			if(xmlType == "RPH_Type"){
+//				Log.Info("INNER")
+//			}
+			//Log.Info("FOUND INNER TYPE "+elRef)
+			fullname := "*"+makePublic(replaceReservedWords(elRef))
+			return fullname
+		}
+	}
+
+
+	for keyPkg, elPkg := range g.packagesTypes {
+		pkg := replaceReservedWords(keyPkg)
+		for keyType, _ := range elPkg {
+			if(elRef == keyType){
+//				if(xmlType == "RPH_Type"){
+//					Log.Info("PKG")
+//				}
+				//Log.Info("FOUND TYPE "+pkg+"."+elRef)
+				if(!g.importsNeeded[pkg]){
+					g.importsNeeded[pkg] = true
+				}
+				fullname := "*"+pkg+"."+makePublic(replaceReservedWords(elRef))
+				return fullname
+			}
+		}
+	}
+
+//	if(xmlType == "RPH_Type"){
+//		Log.Info("NONE")
+//	}
+
+	return toGoType(replaceReservedWords(strings.Title(xmlType)))
+
+
+//	for _, el := range g.xsd.SimpleType {
+//		if strings.EqualFold(elRef, el.Name) {
+//			schemaName := getSchemaName(g.file)
+//			g.xsd.Parent = schemaName
+//			pkg := replaceReservedWords(schemaName)
 //
-//	for _, msg := range g.wsdl.Messages {
-//		if msg.Name != message {
-//			continue
+//			if(!g.importsNeeded[pkg]){
+//				g.importsNeeded[pkg] = true
+//			}
+//
+//			fullname := "*" +pkg+"."+makePublic(replaceReservedWords(el.Name))
+//			return fullname
+//			//					return el.Name
+//		}
+//	}
+//	for _, el := range g.xsd.ComplexTypes {
+//		if strings.EqualFold(elRef, el.Name) {
+//			schemaName := getSchemaName(g.file)
+//			g.xsd.Parent = schemaName
+//			pkg := replaceReservedWords(schemaName)
+//
+//			if(!g.importsNeeded[pkg]){
+//				g.importsNeeded[pkg] = true
+//			}
+//
+//			fullname := "*" +pkg+"."+makePublic(replaceReservedWords(el.Name))
+//			return fullname
+//			//					return el.Name
+//		}
+//	}
+//	for _, el := range g.xsd.AttributeGoups {
+//		if strings.EqualFold(elRef, el.Name) {
+//			schemaName := getSchemaName(g.file)
+//			g.xsd.Parent = schemaName
+//			pkg := replaceReservedWords(schemaName)
+//
+//			if(!g.importsNeeded[pkg]){
+//				g.importsNeeded[pkg] = true
+//			}
+//
+//			fullname := "*" +pkg+"."+makePublic(replaceReservedWords(el.Name))
+//			return fullname
+//			//					return el.Name
+//		}
+//	}
+//		for _, el := range g.xsd.Elements {
+//			if strings.EqualFold(elRef, el.Name) {
+//				if el.Type != "" {
+//					return "*" +stripns(el.Type)
+//				}
+//				schemaName := getSchemaName(g.file)
+//				g.xsd.Parent = schemaName
+//				pkg := replaceReservedWords(schemaName)
+//
+//				if(!g.importsNeeded[pkg]){
+//					g.importsNeeded[pkg] = true
+//				}
+//
+//				fullname := "*" +pkg+"."+makePublic(replaceReservedWords(el.Name))
+//				return fullname
+//				//					return el.Name
+//			}
 //		}
 //
-//		// Assumes document/literal wrapped WS-I
-//		if len(msg.Parts) == 0 {
-//			// Message does not have parts. This could be a Port
-//			// with HTTP binding or SOAP 1.2 binding, which are not currently
-//			// supported.
-//			Log.Warn("WSDL does seem to have HTTP or SOAP 1.2 binding which is not currently supported.")
-//			continue
-//		}
-//		part := msg.Parts[0]
-//		if part.Type != "" {
-//			return stripns(part.Type)
-//		}
+//		for key, schema := range g.resolvedXsdExternals {
+//			fullname := ""
+//			for _, el := range schema.SimpleType {
+//				if strings.EqualFold(elRef, el.Name) {
+//					if(key == g.currentSchema.Parent){
+//						fullname = "*" +makePublic(replaceReservedWords(el.Name))
+////						fullname = "*" +makePublic(replaceReservedWords(key))+"."+makePublic(replaceReservedWords(el.Name))
+//					}else{
+//						pkg := makePublic(replaceReservedWords(key))
+//						if(!g.importsNeeded[pkg]){
+//							g.importsNeeded[pkg] = true
+//						}
+//						fullname = "*" +pkg+"."+makePublic(replaceReservedWords(el.Name))
+//					}
+//					return fullname
+//				}
+//			}
+//			for _, el := range schema.ComplexTypes {
+//				if strings.EqualFold(elRef, el.Name) {
+//					if(key == g.currentSchema.Parent){
+//						fullname = "*" +makePublic(replaceReservedWords(el.Name))
+////						fullname = "*" +makePublic(replaceReservedWords(key))+"."+makePublic(replaceReservedWords(el.Name))
+//					}else{
+//						pkg := makePublic(replaceReservedWords(key))
+//						if(!g.importsNeeded[pkg]){
+//							g.importsNeeded[pkg] = true
+//						}
+//						fullname = "*" +pkg+"."+makePublic(replaceReservedWords(el.Name))
+//					}
+//					return fullname
+//				}			}
+//			for _, el := range schema.AttributeGoups {
+//				if strings.EqualFold(elRef, el.Name) {
+//					if(key == g.currentSchema.Parent){
+//						fullname = "*" +makePublic(replaceReservedWords(el.Name))
+////						fullname = "*" +makePublic(replaceReservedWords(key))+"."+makePublic(replaceReservedWords(el.Name))
+//					}else{
+//						pkg := makePublic(replaceReservedWords(key))
+//						if(!g.importsNeeded[pkg]){
+//							g.importsNeeded[pkg] = true
+//						}
+//						fullname = "*" +pkg+"."+makePublic(replaceReservedWords(el.Name))
+//					}
+//					return fullname
+//				}
+//			}
 //
-//		elRef := stripns(part.Element)
-//
-//		for _, schema := range g.wsdl.Types.Schemas {
 //			for _, el := range schema.Elements {
 //				if strings.EqualFold(elRef, el.Name) {
+//					elName := ""
 //					if el.Type != "" {
-//						return stripns(el.Type)
+//						elName = stripns(el.Type)
+//					}else{
+//						elName = makePublic(replaceReservedWords(el.Name))
 //					}
-//					return el.Name
+//
+//					if(key == g.currentSchema.Parent){
+//						fullname = "*" +makePublic(replaceReservedWords(elName))
+////						fullname = "*" +makePublic(replaceReservedWords(key))+"."+elName
+//					}else{
+//						pkg := makePublic(replaceReservedWords(key))
+//						if(!g.importsNeeded[pkg]){
+//							g.importsNeeded[pkg] = true
+//						}
+//						fullname = "*" +pkg+"."+makePublic(replaceReservedWords(elName))
+//					}
+//					//					Log.Info(fullname)
+//					return fullname
 //				}
 //			}
 //		}
-//
-//		for _, schema := range g.resolvedXsdExternals {
-//			for _, el := range schema.Elements {
-//				if strings.EqualFold(elRef, el.Name) {
-//					if el.Type != "" {
-//						return stripns(el.Type)
-//					}
-//					return el.Name
-//				}
-//			}
-//		}
-//	}
-//	return ""
-//}
 
-// TODO(c4milo): Add support for namespaces instead of striping them out
-// TODO(c4milo): improve runtime complexity if performance turns out to be an issue.
-//func (g *GoWsdl) findSoapAction(operation, portType string) string {
-//	for _, binding := range g.wsdl.Binding {
-//		if stripns(binding.Type) != portType {
-//			continue
-//		}
-//
-//		for _, soapOp := range binding.Operations {
-//			if soapOp.Name == operation {
-//				return soapOp.SoapOperation.SoapAction
-//			}
-//		}
+//	if(isBaseType(xmlType)){
+//		return toGoType(replaceReservedWords(xmlType))
+//	}else{
+//		return toGoType(replaceReservedWords(strings.Title(xmlType)))
 //	}
-//	return ""
-//}
-//
-//func (g *GoWsdl) findServiceAddress(name string) string {
-//	for _, service := range g.wsdl.Service {
-//		for _, port := range service.Ports {
-//			if port.Name == name {
-//				return port.SoapAddress.Location
-//			}
-//		}
-//	}
-//	return ""
-//}
-
-// TODO(c4milo): Add namespace support instead of stripping it
-//func stripns(xsdType string) string {
-//	r := strings.Split(xsdType, ":")
-//	type_ := r[0]
-//
-//	if len(r) == 2 {
-//		type_ = r[1]
-//	}
-//
-//	return type_
-//}
-//
-//func makePublic(field_ string) string {
-//	field := []rune(field_)
-//	if len(field) == 0 {
-//		return field_
-//	}
-//
-//	field[0] = unicode.ToUpper(field[0])
-//	return string(field)
-//}
-//
-//func comment(text string) string {
-//	lines := strings.Split(text, "\n")
-//
-//	var output string
-//	if len(lines) == 1 && lines[0] == "" {
-//		return ""
-//	}
-//
-//	// Helps to determine if
-//	// there is an actual comment
-//	// without screwing newlines
-//	// in real comments.
-//	hasComment := false
-//
-//	for _, line := range lines {
-//		line = strings.TrimLeftFunc(line, unicode.IsSpace)
-//		if line != "" {
-//			hasComment = true
-//		}
-//		output += "\n// " + line
-//	}
-//
-//	if hasComment {
-//		return output
-//	}
-//	return ""
-//}
-//
-////Check if the maxoccur of the element means that is an array or a single instance
-//func isArrayElement(maxOccur string) bool{
-//	if(maxOccur == "unbounded"){
-//		return true
-//	}
-//
-//	i,err := strconv.Atoi(maxOccur)
-//	if(err != nil){
-//		return false
-//	}
-//
-//	return i > 1
-//}
-//
-////dictionary map to pass multiple params to a template
-//func dictValues(values ...interface{}) (map[string]interface{}, error) {
-//	if len(values)%2 != 0 {
-//		return nil, errors.New("invalid dict call")
-//	}
-//	dict := make(map[string]interface{}, len(values)/2)
-//	for i := 0; i < len(values); i+=2 {
-//		key, ok := values[i].(string)
-//		if !ok {
-//			return nil, errors.New("dict keys must be strings")
-//		}
-//		dict[key] = values[i+1]
-//	}
-//	return dict, nil
-//}
+}

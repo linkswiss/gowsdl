@@ -14,12 +14,14 @@ import (
 	"os"
 )
 
+var _ os.File
+
 var Log = log15.New()
 
 func init() {
-//	Log.SetHandler(log15.DiscardHandler())
-	handler := log15.StreamHandler(os.Stdout, log15.LogfmtFormat())
-	Log.SetHandler(handler)
+	Log.SetHandler(log15.DiscardHandler())
+//	handler := log15.StreamHandler(os.Stdout, log15.LogfmtFormat())
+//	Log.SetHandler(handler)
 }
 
 type SoapEnvelope struct {
@@ -31,12 +33,16 @@ type SoapEnvelope struct {
 type SoapHeader struct {
 	ReqHeader interface{}
 	RespHeader interface{}
+	BodyAttributes interface{}
 	Content string     `xml:",innerxml"`
 }
 
 type SoapBody struct {
 	Fault   *SoapFault `xml:"http://schemas.xmlsoap.org/soap/envelope/ Fault,omitempty"`
 	Content string     `xml:",innerxml"`
+
+	RequestId string `xml:"RequestId,attr,omitempty"`
+	Transaction string `xml:"Transaction,attr,omitempty"`
 }
 
 type SoapFault struct {
@@ -64,8 +70,22 @@ func NewSoapClient(url string, tls bool) *SoapClient {
 
 func (s *SoapClient) Call(soapAction string, request, response interface{}, header *SoapHeader, configureRequest func(*http.Request)) error {
 	envelope := SoapEnvelope{
-		Header: header,
+		//Header: header,
 	}
+
+	envelope.Body.RequestId = "TEST"
+	envelope.Body.Transaction = "asdfasdf"
+
+	if(header.BodyAttributes != nil){
+//		bodyAttributes := header.BodyAttributes
+
+
+
+
+		header.BodyAttributes = nil
+	}
+
+	envelope.Header = header
 
 	if request != nil {
 		reqXml, err := xml.Marshal(request)
@@ -74,6 +94,7 @@ func (s *SoapClient) Call(soapAction string, request, response interface{}, head
 		}
 
 		envelope.Body.Content = string(reqXml)
+//		envelope.Body.Attributes = bodyAttributes
 	}
 	buffer := &bytes.Buffer{}
 
@@ -134,7 +155,10 @@ func (s *SoapClient) Call(soapAction string, request, response interface{}, head
 
 	body := respEnvelope.Body.Content
 	fault := respEnvelope.Body.Fault
-	header.Content = respEnvelope.Header.Content
+	if(respEnvelope.Header != nil){
+		header.Content = respEnvelope.Header.Content
+	}
+
 	if body == "" {
 		Log.Warn("empty response body", "envelope", respEnvelope, "body", body)
 		return nil
@@ -145,13 +169,14 @@ func (s *SoapClient) Call(soapAction string, request, response interface{}, head
 		return fault
 	}
 
-	Log.Debug("Header","content",header.Content)
-	err = xml.Unmarshal([]byte(header.Content), header.RespHeader)
-	if err != nil {
-		return err
+	if(header.Content != ""){
+		Log.Debug("Header","content",header.Content)
+		err = xml.Unmarshal([]byte(header.Content), header.RespHeader)
+		if err != nil {
+			return err
+		}
+		Log.Debug("Header","head",header.RespHeader)
 	}
-	Log.Debug("Header","head",header.RespHeader)
-
 
 	err = xml.Unmarshal([]byte(body), response)
 	if err != nil {

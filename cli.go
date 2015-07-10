@@ -11,6 +11,8 @@ import (
 	"os"
 	"runtime"
 	"path/filepath"
+	"path"
+	"strings"
 
 	gen "github.com/hooklift/gowsdl/generator"
 	flags "github.com/jessevdk/go-flags"
@@ -20,7 +22,7 @@ const version = "v0.0.1"
 
 var opts struct {
 	Version    bool   `short:"v" long:"version" description:"Shows gowsdl version"`
-	Package    string `short:"p" long:"package" description:"Package under which code will be generated" default:"myservice"`
+	Package    string `short:"p" long:"package" description:"Package under which code will be generated - use the path to ensure imports and features under sub packages" default:"myservice"`
 	OutputFile string `short:"o" long:"output" description:"File where the generated code will be saved" default:"myservice.go"`
 	IgnoreTls  bool   `short:"i" long:"ignore-tls" description:"Ignores invalid TLS certificates. It is not recomended for production. Use at your own risk" default:"false"`
 	ProcessXsd bool  `short:"x" long:"process-xsd" description:"Process only xsd. it will process the file as xsd or the folder if specified in is-folder" default:"false"`
@@ -139,7 +141,9 @@ func processWSDL(packageOpt string, IgnoreTls bool, outputFile string, args []st
 		log.Fatalln(err)
 	}
 
-	pkg := "./" + packageOpt
+	pkgName := path.Base(packageOpt)
+	pkg := "./" + pkgName
+
 	err = os.Remove(pkg)
 	err = os.Mkdir(pkg, 0744)
 
@@ -171,7 +175,10 @@ func processWSDL(packageOpt string, IgnoreTls bool, outputFile string, args []st
 	fd.Write(source)
 
 	for key, gotype := range gotypes {
-		fd, err := os.Create(pkg + "/" + key + ".go")
+		currPkg := pkg + "/" + strings.Replace(key, "_", "", -1)
+		err = os.Mkdir(currPkg, 0744)
+
+		fd, err := os.Create(currPkg + "/" + key + ".go")
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -192,7 +199,9 @@ func processWSDL(packageOpt string, IgnoreTls bool, outputFile string, args []st
 
 func processXSD(packageOpt string, IgnoreTls bool, xsdFolder bool, args []string){
 
-	pkg := "./" + packageOpt
+	pkgName := path.Base(packageOpt)
+	pkg := "./" + pkgName
+
 	err := os.Remove(pkg)
 	err = os.Mkdir(pkg, 0744)
 
@@ -238,7 +247,10 @@ func processSingleXSD(packageOpt string, IgnoreTls bool, file string, pkg string
 	}
 
 	for key, gotype := range gotypes {
-		filename := pkg + "/" + key + ".go"
+		currPkg := pkg + "/" + strings.Replace(key, "_", "", -1)
+		err = os.Mkdir(currPkg, 0744)
+
+		filename := currPkg + "/" + key + ".go"
 		if _, err := os.Stat(filename); os.IsNotExist(err) {
 			//output file is missing we can proceed
 			fd, err := os.Create(filename)
