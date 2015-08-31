@@ -73,8 +73,9 @@ func (s *SoapClient) Call(soapAction string, request, response interface{}, head
 		//Header: header,
 	}
 
-	envelope.Body.RequestId = "TEST"
-	envelope.Body.Transaction = "asdfasdf"
+	//TODO VERIFY HEADER AND BODY ATTRIBUTES!
+//	envelope.Body.RequestId = "TEST"
+//	envelope.Body.Transaction = "asdfasdf"
 
 	if(header.BodyAttributes != nil){
 //		bodyAttributes := header.BodyAttributes
